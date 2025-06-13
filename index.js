@@ -1,12 +1,11 @@
 import axios from "axios";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 const VERIFY_TOKEN = "1234test";
-const PAGE_ACCESS_TOKEN = "YOUR_PAGE_ACCESS_TOKEN"; // อย่าลืมใส่จริง
-
-exports.handler = async (event) => {
-    if (event.httpMethod === "GET") {
+const PAGE_ACCESS_TOKEN = ""; // Page token 
+const PAGE_ID = "" // page id
+export const handler = async (event) => {
+    console.log(event)
+    if (event.requestContext.http.method === "GET") {
         const params = event.queryStringParameters || {};
         if (
             params["hub.mode"] === "subscribe" &&
@@ -24,45 +23,55 @@ exports.handler = async (event) => {
         }
     }
 
-    if (event.httpMethod === "POST") {
+    if (event.requestContext.http.method === "POST") {
         let body;
         try {
             body = JSON.parse(event.body);
         } catch (err) {
-            console.error("Invalid JSON:", err);
+            console.error("❌ Invalid JSON:", err);
             return { statusCode: 400, body: "Invalid JSON" };
         }
 
-        console.log("📨 Full Event:", JSON.stringify(body, null, 2));
+        console.log("📨 Webhook Event:", JSON.stringify(body));
 
-        for (const entry of body.entry || []) {
-            for (const messagingEvent of entry.messaging || []) {
-                if (messagingEvent.message && messagingEvent.sender?.id) {
-                    console.log("📩 New IG DM:", messagingEvent.message.text);
+        // เช็กว่า object เป็น 'instagram'
+        if (body.object === "instagram") {
+            for (const entry of body.entry || []) {
+                for (const messagingEvent of entry.messaging || []) {
+                    const senderId = messagingEvent.sender?.id;
+                    const text = messagingEvent.message?.text;
 
-                    try {
-                        await axios.post(
-                            `https://graph.facebook.com/v17.0/me/messages`,
-                            {
-                                recipient: { id: messagingEvent.sender.id },
-                                message: { text: "ขอบคุณสำหรับข้อความของคุณ!" },
-                                messaging_type: "RESPONSE",
-                            },
-                            {
-                                headers: {
-                                    Authorization: `Bearer ${PAGE_ACCESS_TOKEN}`,
-                                    "Content-Type": "application/json",
+                    if (senderId && text) {
+                        console.log(`📩 IG DM from ${senderId}: ${text}`);
+
+                        // ส่งข้อความตอบกลับ IG DM
+                        try {
+                            const res = await axios.post(
+                                `https://graph.facebook.com/v17.0/${PAGE_ID}/messages`,
+                                {
+                                    messaging_product: "instagram",
+                                    recipient: { id: senderId },
+                                    message: { text: "ขอบคุณสำหรับข้อความของคุณ!" }
                                 },
-                            }
-                        );
-                    } catch (err) {
-                        console.error("❌ Failed to send reply:", err.response?.data || err.message);
+                                {
+                                    headers: {
+                                        Authorization: `Bearer ${PAGE_ACCESS_TOKEN}`,
+                                        "Content-Type": "application/json"
+                                    }
+                                }
+                            );
+                            console.log("✅ Message sent:", res.data);
+                        } catch (err) {
+                            console.error("❌ Failed to send reply:", err.response?.data || err.message);
+                        }
                     }
                 }
             }
+
+            return { statusCode: 200, body: "EVENT_RECEIVED" };
         }
 
-        return { statusCode: 200, body: "EVENT_RECEIVED" };
+        return { statusCode: 400, body: "Unsupported object type" };
     }
 
     return { statusCode: 405, body: "Method Not Allowed" };
